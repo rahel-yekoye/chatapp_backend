@@ -1,9 +1,9 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const http = require('http'); // Needed for socket.io to work
+const http = require('http');
 const { Server } = require('socket.io');
-const Message = require('./models/Message'); // Import Message model
+const Message = require('./models/message'); // Import Message model
 
 const app = express();
 const port = 3000;
@@ -51,21 +51,27 @@ io.on('connection', (socket) => {
     console.log('📨 Real-time message:', data);
     const { sender, receiver, content } = data;
 
-    // Save message to MongoDB
-    const message = new Message({ sender, receiver, content });
-    await message.save();
+    // Check if the message already exists in the database to avoid duplicates
+    const existingMessage = await Message.findOne({ sender, receiver, content });
+    
+    if (!existingMessage) {
+      // Save message to MongoDB if it doesn't exist
+      const message = new Message({ sender, receiver, content });
+      await message.save();
 
-    // Emit message to sender (in their room)
-    io.to(sender).emit('receive_message', message);
+      // Emit message to sender (in their room)
+      io.to(sender).emit('receive_message', message);
 
-    // Emit message to receiver (in their room)
-    io.to(receiver).emit('receive_message', message);
+      // Emit message to receiver (in their room)
+      io.to(receiver).emit('receive_message', message);
+    } else {
+      console.log('Duplicate message detected, not saving or emitting.');
+    }
   });
 
   // Handle disconnection
   socket.on('disconnect', () => {
     console.log('🔴 User disconnected:', socket.id);
-    // No need to manually track users now as rooms handle this dynamically
   });
 });
 
@@ -74,14 +80,23 @@ app.post('/messages', async (req, res) => {
   try {
     console.log('New message received via API:', req.body);
     const { sender, receiver, content } = req.body;
-    const message = new Message({ sender, receiver, content });
-    await message.save();
 
-    // Emit real-time message to sender and receiver rooms
-    io.to(sender).emit('receive_message', message);
-    io.to(receiver).emit('receive_message', message);
+    // Check if the message already exists in the database
+    const existingMessage = await Message.findOne({ sender, receiver, content });
 
-    res.json({ success: true, message: 'Message sent!', data: message });
+    if (!existingMessage) {
+      const message = new Message({ sender, receiver, content });
+      await message.save();
+
+      // Emit real-time message to sender and receiver rooms
+      io.to(sender).emit('receive_message', message);
+      io.to(receiver).emit('receive_message', message);
+
+      res.json({ success: true, message: 'Message sent!', data: message });
+    } else {
+      console.log('Duplicate message detected, not saving.');
+      res.json({ success: false, message: 'Duplicate message detected' });
+    }
   } catch (error) {
     console.error('❌ Error sending message:', error);
     res.status(500).json({ success: false, message: 'Failed to send message', error });
