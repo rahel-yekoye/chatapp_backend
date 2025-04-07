@@ -117,7 +117,7 @@ app.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid password' });
     }
 
-    const token = jwt.sign({ id: user._id, email: user.email }, 'your_jwt_secret', {
+    const token = jwt.sign({ id: user._id, email: user.email }, process.env.JWT_SECRET, {
       expiresIn: '1h',
     });
 
@@ -137,17 +137,17 @@ app.post('/login', async (req, res) => {
 // Middleware to verify JWT
 function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
+  console.log('Authorization Header:', req.headers['authorization']);
   const token = authHeader && authHeader.split(' ')[1]; // Properly extract token
 
   if (!token) {
     return res.status(401).json({ error: 'Access denied. No token provided.' });
   }
-  
 
   jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
     if (err) {
       console.error('Token verification failed:', err.message);
-      return res.status(403).json({ error: 'Invalid token.' });
+      return res.status(403).json({ error: 'Invalid or malformed token.' });
     }
     req.user = user; // Attach the user payload to the request
     next();
@@ -165,6 +165,7 @@ const searchLimiter = rateLimit({
 
 // Secured /search endpoint
 app.get('/search', authenticateToken, async (req, res) => {
+  console.log('Authenticated user:', req.user); // Debug log
   const { phoneNumber } = req.query;
 
   if (!phoneNumber) {
@@ -224,6 +225,7 @@ io.on('connection', (socket) => {
       await message.save();
       console.log('Message saved to database:', message);
 
+      // Emit the message to the room
       io.to(roomId).emit('receive_message', {
         sender: message.sender,
         receiver: message.receiver,
@@ -232,6 +234,20 @@ io.on('connection', (socket) => {
       });
 
       console.log('Broadcasted receive_message event to room:', roomId);
+
+      // Emit conversation_update to both sender and receiver
+      const conversationUpdate = {
+        otherUser: receiver,
+        message: content,
+        timestamp: message.timestamp,
+      };
+
+      io.to(sender).emit('conversation_update', conversationUpdate);
+
+      conversationUpdate.otherUser = sender; // Update for the receiver
+      io.to(receiver).emit('conversation_update', conversationUpdate);
+
+      console.log('Broadcasted conversation_update event to sender and receiver');
     } catch (error) {
       console.error('Error saving message to database:', error);
     }
