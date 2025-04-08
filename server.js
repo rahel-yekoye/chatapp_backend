@@ -10,8 +10,10 @@ const rateLimit = require('express-rate-limit');
 const Message = require('./models/message'); // Import Message model
 const User = require('./models/user'); // Import User model
 const { parsePhoneNumberFromString } = require('libphonenumber-js');
-
+const multer = require('multer');
+const path = require('path');
 const app = express();
+const fs = require('fs'); // for file handling (e.g., audio uploads in future)
 const port = 3000;
 
 // Create HTTP server to attach Socket.IO
@@ -209,33 +211,47 @@ io.on('connection', (socket) => {
   });
 
   // Handle sending messages
-  socket.on('send_message', async (data) => {
-    console.log('Received send_message event:', data);
+// Handle sending messages
+socket.on('send_message', async (data) => {
+  console.log('Received send_message event:', data);
 
-    const { roomId, sender, receiver, content } = data;
+  const { roomId, sender, receiver, content, isGroup, groupId, fileUrl, emojis } = data;
 
-    const message = new Message({
-      sender,
-      receiver,
-      content,
-      timestamp: new Date(),
+  // Create the message object
+  const messageData = {
+    sender,
+    receiver: isGroup ? undefined : receiver,   // For private message
+    groupId: isGroup ? groupId : undefined,      // For group message
+    content,
+    fileUrl,                                    // For file attachments
+    emojis: emojis || [],                       // For emoji reactions (optional)
+    isGroup: isGroup || false,
+    timestamp: new Date(),
+  };
+
+  const message = new Message(messageData);
+
+  try {
+    // Save the message to the database
+    await message.save();
+    console.log('Message saved to database:', message);
+
+    // Emit the message to the room (whether group or private chat)
+    io.to(roomId).emit('receive_message', {
+      sender: message.sender,
+      receiver: message.receiver,
+      groupId: message.groupId,
+      content: message.content,
+      fileUrl: message.fileUrl,
+      emojis: message.emojis,
+      timestamp: message.timestamp,
+      isGroup: message.isGroup,
     });
 
-    try {
-      await message.save();
-      console.log('Message saved to database:', message);
+    console.log('Broadcasted receive_message event to room:', roomId);
 
-      // Emit the message to the room
-      io.to(roomId).emit('receive_message', {
-        sender: message.sender,
-        receiver: message.receiver,
-        content: message.content,
-        timestamp: message.timestamp,
-      });
-
-      console.log('Broadcasted receive_message event to room:', roomId);
-
-      // Emit conversation_update to both sender and receiver
+    // Emit conversation_update to both sender and receiver (private messages)
+    if (!isGroup) {
       const conversationUpdate = {
         otherUser: receiver,
         message: content,
@@ -248,10 +264,12 @@ io.on('connection', (socket) => {
       io.to(receiver).emit('conversation_update', conversationUpdate);
 
       console.log('Broadcasted conversation_update event to sender and receiver');
-    } catch (error) {
-      console.error('Error saving message to database:', error);
     }
-  });
+  } catch (error) {
+    console.error('Error saving message to database:', error);
+  }
+});
+
 
   // Handle disconnection
   socket.on('disconnect', () => {
@@ -314,6 +332,33 @@ app.get('/messages', async (req, res) => {
     console.error('Error fetching messages:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
+});
+// Configure storage for uploaded files (images, audio, etc.)
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, './uploads/');
+  },
+  filename: function (req, file, cb) {
+    const ext = path.extname(file.originalname);
+    const uniqueName = `${Date.now()}-${Math.round(Math.random() * 1E9)}${ext}`;
+    cb(null, uniqueName);
+  }
+});
+
+const upload = multer({ storage });
+
+// Serve uploaded files statically
+app.use('/uploads', express.static('uploads'));
+
+// File upload endpoint
+app.post('/upload', upload.single('file'), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+  res.status(200).json({
+    message: 'File uploaded successfully',
+    fileUrl: `http://localhost:${port}/uploads/${req.file.filename}`,
+  });
 });
 
 // API route to get all conversations for a user

@@ -1,12 +1,14 @@
 const mongoose = require('mongoose');
 
-// Define the chat message schema
-const MessageSchema = new mongoose.Schema({
-  sender: { type: String, required: true },   // Who sent the message
-  receiver: { type: String, required: true }, // Who receives the message
-  content: { type: String, required: true },  // The message text
-  timestamp: { type: Date, default: Date.now } // When it was sent
+const messageSchema = new mongoose.Schema({
+  sender: String,
+  receiver: String, // Optional for private
+  groupId: String,   // Optional for group
+  content: String,
+  fileUrl: String,   // For attachments
+  emojis: [String],  // For emoji reactions (optional use case)
+  isGroup: { type: Boolean, default: false },
+  timestamp: { type: Date, default: Date.now },
 });
 
-// Export this schema as a model
-module.exports = mongoose.model('Message', MessageSchema);
+module.exports = mongoose.model('Message', messageSchema);
